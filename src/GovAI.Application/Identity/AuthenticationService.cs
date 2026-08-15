@@ -1,0 +1,173 @@
+using System.Text.Json;
+using GovAI.Application.Abstractions.Persistence;
+using GovAI.Application.Abstractions.Services;
+using GovAI.Application.Common;
+using GovAI.Domain.Common;
+using GovAI.Domain.Identity;
+using Microsoft.Extensions.Logging;
+
+namespace GovAI.Application.Identity;
+
+public sealed record LoginRequest(string Email, string Password);
+
+public sealed record LoginResponse(
+    string AccessToken,
+    DateTimeOffset ExpiresAt,
+    string RefreshToken,
+    UserDto User);
+
+public sealed record UserDto(
+    Guid Id,
+    Guid TenantId,
+    string Email,
+    string FullName,
+    UserRole Role,
+    bool IsActive,
+    DateTimeOffset? LastLoginAt);
+
+public sealed record CreateUserRequest(string Email, string FullName, UserRole Role, string Password, IReadOnlyList<Guid>? ScopedCompanyIds);
+
+/// <summary>
+/// JWT tabanlı kimlik doğrulama. Kurumsal SSO devreye alındığında bu servis
+/// yalnızca yerel kullanıcılar için kullanılmaya devam eder.
+/// </summary>
+public sealed class AuthenticationService(
+    IUserRepository users,
+    ITenantRepository tenants,
+    IPasswordHasher passwordHasher,
+    ITokenService tokenService,
+    IUnitOfWork unitOfWork,
+    IDateTimeProvider clock,
+    ILogger<AuthenticationService> logger)
+{
+    public async Task<LoginResponse> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default)
+    {
+        var now = clock.UtcNow;
+        var user = await users.GetByEmailAsync(request.Email, cancellationToken);
+
+        // Kullanıcı yoksa da aynı hata mesajı döner; hesap varlığı sızdırılmaz.
+        if (user is null || !user.IsActive)
+        {
+            logger.LogWarning("Başarısız giriş denemesi. Email={Email}", request.Email);
+            throw new AuthenticationFailedException("E-posta veya parola hatalı.");
+        }
+
+        if (user.IsLockedOut(now))
+        {
+            throw new AuthenticationFailedException("Hesap geçici olarak kilitlendi, lütfen daha sonra tekrar deneyin.");
+        }
+
+        if (user.PasswordHash is null || !passwordHasher.Verify(request.Password, user.PasswordHash))
+        {
+            user.RecordFailedLogin(now);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            throw new AuthenticationFailedException("E-posta veya parola hatalı.");
+        }
+
+        var tenant = await tenants.GetAsync(user.TenantId, cancellationToken);
+        if (tenant is null || !tenant.IsActive)
+        {
+            throw new AuthenticationFailedException("Kurum hesabı aktif değil.");
+        }
+
+        user.RecordSuccessfulLogin(now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        var scopedCompanyIds = ParseScopedCompanies(user);
+        var (token, expiresAt) = tokenService.CreateAccessToken(user.Id, user.TenantId, user.Email, user.Role, scopedCompanyIds);
+
+        logger.LogInformation("Giriş başarılı. UserId={UserId} TenantId={TenantId}", user.Id, user.TenantId);
+
+        return new LoginResponse(token, expiresAt, tokenService.CreateRefreshToken(), ToDto(user));
+    }
+
+    public async Task<UserDto> CreateUserAsync(Guid tenantId, CreateUserRequest request, CancellationToken cancellationToken = default)
+    {
+        var existing = await users.GetByEmailAsync(request.Email, cancellationToken);
+        if (existing is not null)
+        {
+            throw new ValidationException(nameof(request.Email), "Bu e-posta ile kayıtlı bir kullanıcı zaten var.");
+        }
+
+        if (request.Password.Length < 10)
+        {
+            throw new ValidationException(nameof(request.Password), "Parola en az 10 karakter olmalıdır.");
+        }
+
+        var user = new AppUser(tenantId, request.Email, request.FullName, request.Role);
+        user.SetPasswordHash(passwordHasher.Hash(request.Password));
+
+        if (request.ScopedCompanyIds is { Count: > 0 })
+        {
+            user.RestrictToCompanies(JsonSerializer.Serialize(request.ScopedCompanyIds));
+        }
+
+        await users.AddAsync(user, cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return ToDto(user);
+    }
+
+    public async Task<IReadOnlyList<UserDto>> ListAsync(Guid tenantId, CancellationToken cancellationToken = default)
+    {
+        var items = await users.ListAsync(tenantId, cancellationToken);
+        return items.Select(ToDto).ToList();
+    }
+
+    public async Task<UserDto> ChangeRoleAsync(Guid userId, UserRole role, CancellationToken cancellationToken = default)
+    {
+        var user = await users.GetAsync(userId, cancellationToken)
+                   ?? throw new NotFoundException("Kullanıcı", userId);
+
+        user.ChangeRole(role);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return ToDto(user);
+    }
+
+    public async Task<UserDto> SetActiveAsync(Guid userId, bool isActive, CancellationToken cancellationToken = default)
+    {
+        var user = await users.GetAsync(userId, cancellationToken)
+                   ?? throw new NotFoundException("Kullanıcı", userId);
+
+        if (isActive)
+        {
+            user.Activate();
+        }
+        else
+        {
+            user.Deactivate();
+        }
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return ToDto(user);
+    }
+
+    private static IReadOnlyCollection<Guid> ParseScopedCompanies(AppUser user)
+    {
+        if (string.IsNullOrWhiteSpace(user.ScopedCompanyIdsJson))
+        {
+            return [];
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<Guid>>(user.ScopedCompanyIdsJson) ?? [];
+        }
+        catch (JsonException)
+        {
+            // Bozuk kapsam verisi yetkiyi genişletmemeli; boş liste "kısıt yok" anlamına geldiği için
+            // burada güvenli taraf, kullanıcıyı hiçbir firmaya erişemez saymaktır.
+            return [Guid.Empty];
+        }
+    }
+
+    private static UserDto ToDto(AppUser user) => new(
+        user.Id,
+        user.TenantId,
+        user.Email,
+        user.FullName,
+        user.Role,
+        user.IsActive,
+        user.LastLoginAt);
+}

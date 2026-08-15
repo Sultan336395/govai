@@ -1,0 +1,148 @@
+"""GOVAI REST API istemcisi.
+
+Worker'lar veritabanına doğrudan yazmaz. Bunun iki sebebi var:
+    1. Uygunluk, tekilleştirme ve bildirim kuralları tek bir yerde (.NET Application katmanı) kalır.
+    2. Şema değişikliği worker'ları kırmaz; sözleşme REST API'dir.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import httpx
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from govai_workers.config import settings
+from govai_workers.logging_setup import get_logger
+
+log = get_logger(__name__)
+
+
+class ApiError(RuntimeError):
+    """API'den 4xx/5xx döndüğünde fırlatılır."""
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(f"GOVAI API hatası ({status_code}): {detail}")
+        self.status_code = status_code
+        self.detail = detail
+
+
+class GovAiClient:
+    """Basit, senkron API istemcisi. Jeton süresi dolduğunda kendini yeniler."""
+
+    def __init__(self, base_url: str | None = None) -> None:
+        self._base_url = (base_url or settings.api_url).rstrip("/")
+        self._client = httpx.Client(
+            base_url=self._base_url,
+            timeout=settings.api_timeout_seconds,
+            headers={"User-Agent": "GovAI-Worker/0.1"},
+        )
+        self._token: str | None = None
+
+    # ---- oturum ----
+
+    def _authenticate(self) -> None:
+        response = self._client.post(
+            "/api/auth/login",
+            json={"email": settings.api_email, "password": settings.api_password},
+        )
+        if response.status_code != httpx.codes.OK:
+            raise ApiError(response.status_code, response.text)
+
+        self._token = response.json()["accessToken"]
+        log.info("api_authenticated", email=settings.api_email)
+
+    def _headers(self) -> dict[str, str]:
+        if self._token is None:
+            self._authenticate()
+        return {"Authorization": f"Bearer {self._token}"}
+
+    @retry(
+        retry=retry_if_exception_type(httpx.TransportError),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
+    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        response = self._client.request(method, path, headers=self._headers(), **kwargs)
+
+        # Jeton süresi dolmuşsa bir kez yenile ve tekrar dene.
+        if response.status_code == httpx.codes.UNAUTHORIZED:
+            self._token = None
+            response = self._client.request(method, path, headers=self._headers(), **kwargs)
+
+        if response.status_code >= httpx.codes.BAD_REQUEST:
+            raise ApiError(response.status_code, response.text[:500])
+
+        if response.status_code == httpx.codes.NO_CONTENT or not response.content:
+            return None
+
+        return response.json()
+
+    # ---- kaynaklar ----
+
+    def list_sources(self, only_enabled: bool = True) -> list[dict[str, Any]]:
+        return self._request("GET", "/api/sources", params={"onlyEnabled": only_enabled}) or []
+
+    def ingest_document(
+        self,
+        source_id: str,
+        url: str,
+        title: str,
+        raw_content: str,
+        media_type: str,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/api/sources/documents",
+            json={
+                "sourceId": source_id,
+                "url": url,
+                "title": title,
+                "rawContent": raw_content,
+                "mediaType": media_type,
+            },
+        )
+
+    def record_run(
+        self,
+        source_id: str,
+        status: str,
+        message: str | None,
+        document_count: int,
+    ) -> None:
+        self._request(
+            "POST",
+            f"/api/sources/{source_id}/runs",
+            json={"status": status, "message": message, "documentCount": document_count},
+        )
+
+    def trigger_crawl(self, source_id: str) -> None:
+        self._request("POST", f"/api/sources/{source_id}/crawl")
+
+    # ---- fırsatlar ----
+
+    def upsert_opportunity(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/api/opportunities", json=payload)
+
+    # ---- skorlama ve bildirim ----
+
+    def rescore_company(self, company_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/api/eligibility/companies/{company_id}/rescore")
+
+    def list_companies(self) -> list[dict[str, Any]]:
+        return self._request("GET", "/api/company-profile") or []
+
+    def dispatch_notifications(self, batch_size: int = 100) -> dict[str, Any]:
+        return self._request(
+            "POST", "/api/notifications/dispatch", params={"batchSize": batch_size}
+        )
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> GovAiClient:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()

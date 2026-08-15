@@ -1,0 +1,149 @@
+using GovAI.Domain.Common;
+
+namespace GovAI.Domain.Opportunities;
+
+/// <summary>
+/// Resmî bir teşvik / hibe / ihale çağrısı. Teknik dokümandaki <c>OpportunityRule</c> yapısının
+/// kalıcı karşılığıdır: temel künye alanları burada, makine tarafından değerlendirilen koşullar
+/// <see cref="Rules"/> altında tutulur.
+/// </summary>
+public class Opportunity : AggregateRoot, IAuditable, ISoftDeletable
+{
+    private readonly List<OpportunityRule> _rules = [];
+    private readonly List<DocumentRequirement> _documentChecklist = [];
+
+    private Opportunity()
+    {
+    }
+
+    public Opportunity(
+        Guid sourceId,
+        SourceType sourceType,
+        SupportCategory supportCategory,
+        string title,
+        string publisher,
+        DateTimeOffset publishedAt)
+    {
+        DomainException.ThrowIf(string.IsNullOrWhiteSpace(title), "Çağrı başlığı zorunludur.");
+        DomainException.ThrowIf(string.IsNullOrWhiteSpace(publisher), "Yayınlayan kurum zorunludur.");
+
+        SourceId = sourceId;
+        SourceType = sourceType;
+        SupportCategory = supportCategory;
+        Title = title.Trim();
+        Publisher = publisher.Trim();
+        PublishedAt = publishedAt;
+    }
+
+    public Guid SourceId { get; private set; }
+
+    /// <summary>Ham dokümana geri izlenebilirlik; açıklanabilirlik için raporda kaynak gösterilir.</summary>
+    public Guid? SourceDocumentId { get; private set; }
+
+    public SourceType SourceType { get; private set; }
+
+    public SupportCategory SupportCategory { get; private set; }
+
+    public string Title { get; private set; } = string.Empty;
+
+    public string Publisher { get; private set; } = string.Empty;
+
+    public string? Summary { get; private set; }
+
+    /// <summary>Çağrı metninin kalıcı adresi.</summary>
+    public string? SourceUrl { get; private set; }
+
+    public DateTimeOffset PublishedAt { get; private set; }
+
+    /// <summary>Son başvuru tarihi. <c>timingScore</c> ve son tarih bildirimlerinin girdisidir.</summary>
+    public DateTimeOffset? Deadline { get; private set; }
+
+    public BudgetRange? Budget { get; private set; }
+
+    /// <summary>Çağrı metninden çıkarılan koşulların ne kadarının otomatik doğrulanabildiği (0..1).</summary>
+    public decimal RuleExtractionConfidence { get; private set; }
+
+    /// <summary>Danışman, otomatik çıkarılan kuralları gözden geçirip onayladı mı?</summary>
+    public bool IsReviewedByConsultant { get; private set; }
+
+    public IReadOnlyCollection<OpportunityRule> Rules => _rules.AsReadOnly();
+
+    public IReadOnlyCollection<DocumentRequirement> DocumentChecklist => _documentChecklist.AsReadOnly();
+
+    public DateTimeOffset CreatedAt { get; set; }
+    public string? CreatedBy { get; set; }
+    public DateTimeOffset? UpdatedAt { get; set; }
+    public string? UpdatedBy { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTimeOffset? DeletedAt { get; set; }
+
+    public bool IsOpenOn(DateTimeOffset asOf) => Deadline is null || Deadline >= asOf;
+
+    public int? DaysUntilDeadline(DateTimeOffset asOf) =>
+        Deadline is null ? null : (int)Math.Ceiling((Deadline.Value - asOf).TotalDays);
+
+    public void Describe(string? summary, string? sourceUrl, Guid? sourceDocumentId)
+    {
+        Summary = summary?.Trim();
+        SourceUrl = sourceUrl?.Trim();
+        SourceDocumentId = sourceDocumentId;
+    }
+
+    public void SetSchedule(DateTimeOffset publishedAt, DateTimeOffset? deadline)
+    {
+        DomainException.ThrowIf(deadline is not null && deadline < publishedAt, "Son başvuru tarihi yayın tarihinden önce olamaz.");
+        PublishedAt = publishedAt;
+        Deadline = deadline;
+    }
+
+    public void SetBudget(BudgetRange? budget) => Budget = budget;
+
+    /// <summary>Parser/AI tarafından çıkarılan kural setini değiştirir. Onay bayrağı sıfırlanır.</summary>
+    public void ReplaceRules(IEnumerable<OpportunityRule> rules, decimal extractionConfidence)
+    {
+        DomainException.ThrowIf(
+            extractionConfidence is < 0m or > 1m,
+            "Kural çıkarım güveni 0 ile 1 arasında olmalıdır.");
+
+        _rules.Clear();
+        _rules.AddRange(rules);
+        RuleExtractionConfidence = extractionConfidence;
+        IsReviewedByConsultant = false;
+    }
+
+    public void ReplaceDocumentChecklist(IEnumerable<DocumentRequirement> requirements)
+    {
+        _documentChecklist.Clear();
+        _documentChecklist.AddRange(requirements);
+    }
+
+    /// <summary>Danışman onayı; istisna yönetimi ve sektörel yorum riskine karşı zorunlu adım.</summary>
+    public void MarkReviewed() => IsReviewedByConsultant = true;
+}
+
+/// <summary>Destek tutarı aralığı ve destek oranı.</summary>
+public sealed record BudgetRange
+{
+    public BudgetRange(decimal? minAmount, decimal? maxAmount, string currency, decimal? supportRate)
+    {
+        DomainException.ThrowIf(minAmount is < 0 || maxAmount is < 0, "Bütçe tutarı negatif olamaz.");
+        DomainException.ThrowIf(
+            minAmount is not null && maxAmount is not null && maxAmount < minAmount,
+            "Üst bütçe sınırı alt sınırdan küçük olamaz.");
+        DomainException.ThrowIf(supportRate is < 0m or > 1m, "Destek oranı 0 ile 1 arasında olmalıdır.");
+
+        MinAmount = minAmount;
+        MaxAmount = maxAmount;
+        Currency = string.IsNullOrWhiteSpace(currency) ? "TRY" : currency.ToUpperInvariant();
+        SupportRate = supportRate;
+    }
+
+    public decimal? MinAmount { get; init; }
+
+    public decimal? MaxAmount { get; init; }
+
+    public string Currency { get; init; } = "TRY";
+
+    /// <summary>Hibe/destek oranı (ör. 0.75 = %75 hibe).</summary>
+    public decimal? SupportRate { get; init; }
+}

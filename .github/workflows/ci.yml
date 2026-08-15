@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: .NET derleme ve testler
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: NuGet önbelleği
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - run: dotnet restore
+
+      - run: dotnet build --configuration Release --no-restore
+
+      - run: dotnet test --configuration Release --no-build --logger "trx;LogFileName=test-results.trx"
+
+      - name: Test sonuçlarını yükle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-test-results
+          path: '**/TestResults/*.trx'
+          if-no-files-found: ignore
+
+      - name: Migration'ların model ile uyumlu olduğunu doğrula
+        run: |
+          dotnet tool restore
+          dotnet dotnet-ef migrations has-pending-model-changes \
+            --project src/GovAI.Persistence \
+            --startup-project src/GovAI.Api
+
+  workers:
+    name: Python worker lint ve testler
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - run: pip install -e ".[dev]"
+
+      - run: ruff check .
+
+      - run: pytest -q
+
+  web:
+    name: Web derleme ve lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm run typecheck
+
+      - run: npm run build
+
+  docker:
+    name: Docker imajları derlenebiliyor mu
+    runs-on: ubuntu-latest
+    needs: [backend, workers, web]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: API imajı
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/GovAI.Api/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Worker imajı
+        uses: docker/build-push-action@v6
+        with:
+          context: workers
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Web imajı
+        uses: docker/build-push-action@v6
+        with:
+          context: web
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

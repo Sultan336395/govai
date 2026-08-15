@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GovAI.Api/GovAI.Api.csproj" />
+    <Project Path="src/GovAI.Application/GovAI.Application.csproj" />
+    <Project Path="src/GovAI.Domain/GovAI.Domain.csproj" />
+    <Project Path="src/GovAI.Infrastructure/GovAI.Infrastructure.csproj" />
+    <Project Path="src/GovAI.Persistence/GovAI.Persistence.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GovAI.Application.Tests/GovAI.Application.Tests.csproj" />
+    <Project Path="tests/GovAI.Domain.Tests/GovAI.Domain.Tests.csproj" />
+  </Folder>
+</Solution>

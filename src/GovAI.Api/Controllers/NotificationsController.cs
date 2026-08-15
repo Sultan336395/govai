@@ -1,0 +1,60 @@
+using GovAI.Api.Infrastructure;
+using GovAI.Application.Abstractions.Persistence;
+using GovAI.Application.Notifications;
+using GovAI.Domain.Common;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace GovAI.Api.Controllers;
+
+/// <summary>
+/// <c>/api/notifications</c> — son tarih uyarıları, yeni fırsat eşleşmeleri, durum güncellemeleri.
+/// </summary>
+[ApiController]
+[Route("api/notifications")]
+[Authorize(Policy = Policies.Read)]
+[Produces("application/json")]
+public sealed class NotificationsController(NotificationService service) : ControllerBase
+{
+    [HttpGet]
+    public async Task<ActionResult<PagedResult<NotificationDto>>> List(
+        [FromQuery] Guid? companyId,
+        [FromQuery] bool? onlyUnread,
+        [FromQuery] NotificationKind[]? kinds,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 25,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new NotificationQuery
+        {
+            CompanyId = companyId,
+            OnlyUnread = onlyUnread,
+            Kinds = kinds,
+            Page = page,
+            PageSize = pageSize
+        };
+
+        return Ok(await service.ListAsync(query, cancellationToken));
+    }
+
+    [HttpPost("{id:guid}/read")]
+    public async Task<ActionResult<NotificationDto>> MarkRead(Guid id, CancellationToken cancellationToken) =>
+        Ok(await service.MarkReadAsync(id, cancellationToken));
+
+    /// <summary>
+    /// Gönderilmemiş bildirimleri dış kanallara aktarılmak üzere kuyruğa bırakır.
+    /// Zamanlanmış worker tarafından çağrılır.
+    /// </summary>
+    [HttpPost("dispatch")]
+    [Authorize(Policy = Policies.SuperAdmin)]
+    [Audited("Notification.Dispatched", "Notification")]
+    public async Task<ActionResult<DispatchResponse>> Dispatch(
+        [FromQuery] int batchSize = 100,
+        CancellationToken cancellationToken = default)
+    {
+        var count = await service.DispatchPendingAsync(batchSize, cancellationToken);
+        return Ok(new DispatchResponse(count));
+    }
+
+    public sealed record DispatchResponse(int ProcessedCount);
+}
