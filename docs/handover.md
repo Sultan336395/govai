@@ -1,0 +1,165 @@
+# Devir notu
+
+**Tarih:** 15.08.2026 · **Durum:** Altyapı kurulumu tamamlandı, geliştirmeye hazır
+**Devreden:** Claude Opus 5 oturumu (Windows 11, yerel) · **Devralan:** yeni ortam
+
+Bu belge, projeyi GitHub'dan çekip devam edecek kişi/oturum için yazılmıştır.
+Günlük çalışma kuralları `CLAUDE.md`'dedir; burada **ne yapıldı, ne doğrulandı,
+nereden devam edilir** anlatılır.
+
+---
+
+## 1. Ne teslim ediliyor
+
+Proje dosyasında sayılan 10 modülün **çalışan iskeleti**. İş mantığı gerçek, veri sahte:
+kural motoru ve skorlama tam olarak yazıldı ve testlendi; kaynak tarayıcıları ve
+ERP adaptörleri gerçek kurumlara/sistemlere bağlanmayı bekliyor.
+
+| Katman | Durum | Not |
+|---|---|---|
+| Domain (kural motoru + skorlama) | **Tamam** | 13 operatör, 7 boyut, 29 test |
+| Application (use-case servisleri) | **Tamam** | 8 servis, MediatR yok |
+| Persistence (EF Core + PostgreSQL) | **Tamam** | 18 tablo, ilk migration üretildi |
+| Infrastructure | **Tamam** | OpenAI, Redis, RabbitMQ, JWT, PDF/Excel |
+| API (8 endpoint grubu) | **Tamam** | Swagger, 5 rol, otomatik audit log |
+| Python worker'ları | **İskelet** | Akış uçtan uca yazıldı; kurum bazlı seçiciler yok |
+| Web paneli | **Tamam** | 8 ekran, gerçek API sözleşmesine bağlı |
+| docker-compose + CI | **Yazıldı** | Uçtan uca ayağa kalkma provası yapılmadı (§4) |
+
+---
+
+## 2. Ne doğrulandı
+
+Bu makinede fiilen çalıştırılıp geçtiği görüldü:
+
+| Kontrol | Sonuç |
+|---|---|
+| `dotnet build -c Release` | Başarılı, **0 uyarı** |
+| `dotnet test` | **34/34** geçti (29 domain + 5 application) |
+| `dotnet dotnet-ef migrations has-pending-model-changes` | Bekleyen değişiklik yok |
+| `pytest -q` (workers) | **12/12** geçti |
+| `ruff check .` (workers) | Temiz |
+| `npm run lint` (web) | Temiz (`--max-warnings 0`) |
+| `npm run typecheck` (web) | Temiz |
+| `npm run build` (web) | Başarılı |
+| `python scripts/check_contract_parity.py` | C#/Python sözleşmeleri senkron |
+| `dotnet tool restore` | `dotnet-ef` geri yükleniyor |
+
+**Doğrulanmadı:** `docker compose up` — bu makinede Docker CLI PATH'te değildi.
+Dockerfile'lar ve compose yazıldı, CI'da imajlar derleniyor, ama servisler birlikte
+ayağa kaldırılıp uçtan uca akış denenmedi.
+
+---
+
+## 3. İlk 30 dakikada yapılması gereken
+
+Sırayla:
+
+```bash
+git clone <repo> && cd GOVAI
+dotnet tool restore
+dotnet build -c Release && dotnet test
+```
+
+```bash
+cd workers && python -m venv .venv && .venv/bin/pip install -e ".[dev]" && .venv/bin/pytest -q
+```
+
+```bash
+cd web && npm ci && npm run lint && npm run typecheck && npm run build
+```
+
+Üçü de yeşilse teslim doğru gelmiştir. Sonra:
+
+```bash
+cd deploy && cp .env.example .env
+# .env içinde POSTGRES_PASSWORD, RABBITMQ_PASSWORD, JWT_SIGNING_KEY (>=32 karakter) doldur
+# demo verisi için: SEED_ENABLED=true ve SEED_ADMIN_PASSWORD=...
+docker compose up -d --build
+```
+
+Beklenen sonuç: http://localhost:5180 açılır, seed hesabıyla giriş yapılır,
+panelde bir demo firma ve üç demo çağrı görünür, "Yeniden skorla" butonu skor üretir.
+
+**Bu adım henüz kimse tarafından denenmedi.** Takılırsan büyük ihtimalle ilk kırılacak
+yerler: `.env` değişkenlerinin API'ye geçmesi, migration'ın açılışta uygulanması,
+worker'ların API'ye kimlik doğrulaması (`GOVAI_API_PASSWORD` seed parolasıyla aynı olmalı).
+
+---
+
+## 4. Devam için önerilen sıra
+
+Yol haritasının tamamı `docs/roadmap.md`'de. Bugünkü noktadan bakınca en mantıklı ilk üç iş:
+
+**1. Compose'u uçtan uca ayağa kaldır ve akışı doğrula (§3).**
+Bunu yapmadan üstüne kod yazmak, hataları birikmiş hâlde bulmak demektir.
+
+**2. Gerçek bir kaynağı bağla.** Tek bir kurumla başla — örneğin Çukurova Kalkınma Ajansı.
+`sources` kaydındaki `configurationJson` alanına CSS seçicilerini yaz:
+
+```json
+{
+  "listUrl": "/duyurular",
+  "linkSelector": "a.duyuru-link",
+  "titleSelector": "h1.baslik",
+  "contentSelector": "div.icerik",
+  "urlPattern": "duyuru|cagri",
+  "maxPages": 3
+}
+```
+
+Sonra `govai-parser --url <ilan-adresi>` ile kural çıkarımının o kurumun metninde ne
+ürettiğine bak. Kalıp kütüphanesini (`rule_extractor.py`) gerçek metne göre genişlet.
+Bu, ürünün en çok emek isteyen ve en çok değer üreten kısmıdır.
+
+**3. Danışman onay ekranını tamamla.** API tarafı hazır
+(`PUT /api/opportunities/{id}/rules/{ruleId}`, `POST /{id}/review`), panelde karşılığı yok.
+Kural kalitesi danışman onayına bağlı olduğu için bu, pilot öncesi zorunlu adımdır.
+
+---
+
+## 5. Karar verilmesi gereken açık konular
+
+Bunlar teknik değil iş kararlarıdır; devralan tarafın müşteriyle netleştirmesi gerekir.
+
+| Konu | Neden şimdi | Varsayılan davranış |
+|---|---|---|
+| **Kimlik doğrulama** | Kurumsal SSO mu, yerel hesap mı? `AppUser.ExternalSubjectId` hazır ama OIDC akışı yazılmadı | Yerel hesap + JWT |
+| **AI maliyeti** | Her yeni çağrı bir LLM çağrısı demek; aylık bütçe sınırı ve model tercihi netleşmeli | `gpt-4.1` çıkarım, `gpt-4.1-mini` özet |
+| **Veri saklama süresi** | KVKK envanteri çıkarılmadı; audit log ve değerlendirme geçmişi süresiz büyüyor | Sınırsız |
+| **Çok kiracılılık derinliği** | Danışmanlık şirketi senaryosu (bir kiracı, çok firma) modellendi ama fiyatlandırma/kota kuralları belirsiz | `Tenant.MaxCompanies` |
+| **.NET sürümü** | Proje dosyası .NET 8 diyor, kod .NET 10 hedefliyor | `docs/adr/0004`'te gerekçeli; teknopark dokümanında "C# / .NET (LTS)" önerilir |
+
+---
+
+## 6. Tuzaklar
+
+Bu projede zaman kaybettirebilecek, koda bakınca hemen görünmeyen noktalar:
+
+- **Solution dosyası `GovAI.slnx`** (yeni XML formatı). `dotnet build GovAI.sln` "proje dosyası yok"
+  hatası verir. Argümansız kullan.
+- **`dotnet-ef` yerel araçtır** → komut `dotnet dotnet-ef ...` (çift `dotnet`).
+  Önce `dotnet tool restore`.
+- **Alan beyaz listesi iki yerde tanımlı** (C# ve Python). Birini güncelleyip diğerini unutmak
+  sessiz skor bozulmasına yol açar; `scripts/check_contract_parity.py` bunu yakalar, CI'da koşar.
+- **Web'de `--max-warnings 0`** — lint uyarısı build'i kırar.
+- **React context'leri `app/contexts.ts`'te**, provider'lar ayrı dosyalarda. Hook'u provider
+  dosyasına geri taşırsan fast-refresh lint kuralı patlar.
+- **`Guid.CreateVersion7()`** .NET 9+ gerektirir. .NET 8'e dönülecekse değiştirilmeli.
+- **Seed parolası ile worker parolası aynı olmalı** (`SEED_ADMIN_PASSWORD` ↔ `GOVAI_API_PASSWORD`),
+  yoksa worker'lar API'ye giriş yapamaz.
+
+---
+
+## 7. Belge haritası
+
+| Soru | Belge |
+|---|---|
+| Nasıl çalıştırırım? | `README.md` |
+| Kod yazarken nelere dikkat etmeliyim? | `CLAUDE.md` |
+| Sistem nasıl kurgulandı? | `docs/architecture.md` |
+| Skor nasıl hesaplanıyor? | `docs/scoring.md` |
+| Tablolar ve alanlar? | `docs/data-model.md` |
+| Hangi endpoint ne yapar? | `docs/api.md` |
+| Bu neden böyle yapılmış? | `docs/adr/` |
+| Sırada ne var? | `docs/roadmap.md` |

@@ -8,6 +8,16 @@ uygunluğu, eksik koşulları ve başvuru yapılabilirliğini **açıklanabilir*
 > Hazırlayan: TalentHub İnsan Kaynakları Danışmanlık ve Sistem Tasarımı
 > Proje takvimi: 12 ay (01.06.2026 – 31.05.2027)
 
+## 📌 Projeyi yeni devraldıysanız
+
+| Önce bunu okuyun | Neden |
+|---|---|
+| **[docs/handover.md](docs/handover.md)** | Ne teslim edildi, ne doğrulandı, ilk 30 dakikada ne yapılmalı, hangi tuzaklar var |
+| **[CLAUDE.md](CLAUDE.md)** | Kod yazarken uyulması gereken bozulmaz kurallar ve iki yığın arasındaki çapraz sözleşmeler |
+| **[docs/adr/](docs/adr/README.md)** | "Bu neden böyle yapılmış" sorularının cevabı |
+
+Yapay zekâ asistanıyla çalışıyorsanız `CLAUDE.md` otomatik olarak okunur; ayrıca göstermenize gerek yok.
+
 ---
 
 ## Neden "sadece bir ilan takip sistemi" değil
@@ -190,7 +200,14 @@ cd workers && .venv/Scripts/python -m pytest -q && .venv/Scripts/python -m ruff 
 cd web && npm run lint && npm run typecheck && npm run build
 ```
 
-CI aynı üç adımı ve Docker imaj derlemelerini `.github/workflows/ci.yml` içinde çalıştırır.
+C# ve Python arasındaki paylaşılan sözleşmelerin (alan beyaz listesi, kuyruk adları)
+senkron kaldığını doğrular — derleyicinin koruyamadığı, sessizce bozulan yer:
+
+```bash
+python scripts/check_contract_parity.py
+```
+
+CI bu adımların tamamını ve Docker imaj derlemelerini `.github/workflows/ci.yml` içinde çalıştırır.
 
 ---
 
@@ -221,6 +238,15 @@ Geliştirmede `Database:AutoMigrate=true` ile uygulama açılışında otomatik 
 
 ---
 
-## Yol haritası
+## Belge haritası
 
-12 aylık iş-zaman planı: [docs/roadmap.md](docs/roadmap.md).
+| Soru | Belge |
+|---|---|
+| Projeyi yeni devraldım, nereden başlarım? | [docs/handover.md](docs/handover.md) |
+| Kod yazarken nelere dikkat etmeliyim? | [CLAUDE.md](CLAUDE.md) |
+| Sistem nasıl kurgulandı? | [docs/architecture.md](docs/architecture.md) |
+| Skor nasıl hesaplanıyor? | [docs/scoring.md](docs/scoring.md) |
+| Tablolar ve alanlar? | [docs/data-model.md](docs/data-model.md) |
+| Hangi endpoint ne yapar? | [docs/api.md](docs/api.md) |
+| Bu neden böyle yapılmış? | [docs/adr/](docs/adr/README.md) |
+| Sırada ne var? | [docs/roadmap.md](docs/roadmap.md) |

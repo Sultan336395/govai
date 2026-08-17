@@ -69,6 +69,20 @@ jobs:
 
       - run: pytest -q
 
+  contracts:
+    name: C# / Python sözleşme senkronu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Alan beyaz listesi ve kuyruk adları iki yığında ayrı tanımlı; derleyici
+      # bunları koruyamaz, uyuşmazlık sessizce yanlış skor üretir.
+      - run: python scripts/check_contract_parity.py
+
   web:
     name: Web derleme ve lint
     runs-on: ubuntu-latest

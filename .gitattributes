@@ -1,0 +1,25 @@
+# Depo Windows'ta oluşturuldu, Linux/macOS'ta da geliştirilecek.
+# Satır sonlarını depoda LF'te sabitliyoruz ki platform değiştiğinde sahte fark çıkmasın.
+* text=auto eol=lf
+
+# Kapsayıcı içinde çalışan dosyalar CRLF ile bozulur.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Windows araçları bunları CRLF bekler.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Farkı okunmaz yapan üretilmiş dosyalar; incelemede daraltılır.
+web/package-lock.json linguist-generated=true -diff
+src/GovAI.Persistence/Migrations/** linguist-generated=true
+
+*.png binary
+*.jpg binary
+*.pdf binary
+*.ico binary
+*.woff binary
+*.woff2 binary
