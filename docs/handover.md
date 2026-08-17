@@ -45,9 +45,14 @@ Bu makinede fiilen çalıştırılıp geçtiği görüldü:
 | `python scripts/check_contract_parity.py` | C#/Python sözleşmeleri senkron |
 | `dotnet tool restore` | `dotnet-ef` geri yükleniyor |
 
-**Doğrulanmadı:** `docker compose up` — bu makinede Docker CLI PATH'te değildi.
-Dockerfile'lar ve compose yazıldı, CI'da imajlar derleniyor, ama servisler birlikte
-ayağa kaldırılıp uçtan uca akış denenmedi.
+Ayrıca **GitHub Actions'ta beş işin beşi de yeşil** (koşu `32040784548`): .NET derleme+test,
+Python lint+test, web derleme+lint, sözleşme senkronu ve üç Docker imajının derlenmesi.
+İmajlar: `govai-web` 52.7 MB, `govai-worker` 184 MB, `govai-api` 371 MB.
+
+**Doğrulanmadı:** `docker compose up` ile servislerin **birlikte** ayağa kalkması.
+İmajların derlendiği CI'da kanıtlandı, ancak API'nin veritabanına bağlanması,
+migration'ın açılışta uygulanması ve worker'ların API'ye kimlik doğrulaması
+uçtan uca hiç denenmedi (bu makinede Docker CLI yoktu).
 
 ---
 
@@ -81,9 +86,11 @@ docker compose up -d --build
 Beklenen sonuç: http://localhost:5180 açılır, seed hesabıyla giriş yapılır,
 panelde bir demo firma ve üç demo çağrı görünür, "Yeniden skorla" butonu skor üretir.
 
-**Bu adım henüz kimse tarafından denenmedi.** Takılırsan büyük ihtimalle ilk kırılacak
-yerler: `.env` değişkenlerinin API'ye geçmesi, migration'ın açılışta uygulanması,
-worker'ların API'ye kimlik doğrulaması (`GOVAI_API_PASSWORD` seed parolasıyla aynı olmalı).
+**İmajların derlendiği doğrulandı, ancak bu orkestrasyon adımı henüz hiç denenmedi.**
+Takılırsan ilk bakılacak yerler: `.env` değişkenlerinin API'ye geçmesi, migration'ın
+açılışta uygulanması, worker'ların API'ye kimlik doğrulaması (`GOVAI_API_PASSWORD`
+seed parolasıyla aynı olmalı) ve hibrit geliştirmede `POSTGRES_PASSWORD` ile
+`appsettings.Development.json` parolasının eşleşmesi.
 
 ---
 

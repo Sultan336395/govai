@@ -225,9 +225,14 @@ Bunlar hata değil, bilinçli ertelemedir. Tamamı gerekçesi ve hedef ayıyla
 | Web birim testleri | Yok — API sözleşmesi oturmadan yazmak erken görüldü |
 | Kod bölme | Bundle ~714 KB, tek parça |
 
-`docker compose up` bu makinede **çalıştırılamadı** (Docker CLI PATH'te yoktu).
-Compose ve Dockerfile'lar yazıldı ve CI'da imajlar derleniyor, ancak uçtan uca ayağa
-kalkma provası henüz yapılmadı. Devralan taraf için ilk doğrulama adımı budur.
+Üç Docker imajının da derlendiği CI'da doğrulandı, ancak `docker compose up` ile
+servislerin **birlikte** ayağa kalkması hiç denenmedi (bu makinede Docker CLI yoktu).
+API'nin veritabanına bağlanması, migration'ın açılışta uygulanması ve worker'ların
+API'ye kimlik doğrulaması açık uçlar. Devralan taraf için ilk doğrulama adımı budur.
+
+CI'da `actions/setup-dotnet` ve `docker/setup-buildx-action` bilerek kullanılmıyor;
+gerekçe `.github/workflows/ci.yml` içindeki notlarda. "Sadeleştirme" amacıyla standart
+action'lara geri dönmeden önce oradaki geçmişi oku.
 
 ---
 
