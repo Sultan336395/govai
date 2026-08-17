@@ -53,7 +53,9 @@ Ardından:
 
 ### Yerel geliştirme
 
-Yalnızca altyapı servislerini Docker'da çalıştırıp uygulamaları yerelde ayağa kaldırın:
+Yalnızca altyapı servislerini Docker'da çalıştırıp uygulamaları yerelde ayağa kaldırın.
+Bu akışta `deploy/.env` içindeki `POSTGRES_PASSWORD`, `appsettings.Development.json`
+içindeki parola ile **aynı** olmalıdır (`local-dev-only`), aksi hâlde API veritabanına bağlanamaz:
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d postgres redis rabbitmq
