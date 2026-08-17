@@ -4,7 +4,7 @@ WORKDIR /src
 
 # Önce yalnızca proje dosyalarını kopyalayıp restore ediyoruz; kaynak değişse de
 # NuGet katmanı önbellekte kalır ve derleme belirgin şekilde hızlanır.
-COPY Directory.Build.props ./
+COPY Directory.Build.props global.json ./
 COPY src/GovAI.Domain/GovAI.Domain.csproj src/GovAI.Domain/
 COPY src/GovAI.Application/GovAI.Application.csproj src/GovAI.Application/
 COPY src/GovAI.Persistence/GovAI.Persistence.csproj src/GovAI.Persistence/
